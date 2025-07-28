@@ -22,7 +22,7 @@ Follow the steps below to set up and run the project locally.
 ```bash
 git clone https://github.com/Tabassum-Yunus/EnE_Chatbot.git
 cd EnE_Chatbot
-
+```
 ### 2. Create and Activate a Virtual Environment
 
 **On Windows:**
