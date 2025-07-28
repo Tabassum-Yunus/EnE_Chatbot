@@ -13,7 +13,7 @@ EnE Chatbot is a Retrieval-Augmented Generation (RAG) chatbot designed to provid
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 Follow the steps below to set up and run the project locally.
 
@@ -69,7 +69,7 @@ python main.py
 
 ---
 
-## 🔑 How to Get API Keys
+## How to Get API Keys
 
 ### OpenAI API Key
 
@@ -93,7 +93,7 @@ python main.py
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 | Variable               | Description                           |
 | ---------------------- | ------------------------------------- |
@@ -107,7 +107,7 @@ python main.py
 
 ---
 
-## 🧠 Technologies Used
+## Technologies Used
 
 * [OpenAI GPT-3.5 Turbo](https://platform.openai.com/docs/models/gpt-3-5)
 * [Qdrant Vector DB](https://qdrant.tech/)
