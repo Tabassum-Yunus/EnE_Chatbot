@@ -23,6 +23,11 @@ CHAT_MODEL = os.getenv('CHAT_MODEL')
 base_path = Path(__file__).resolve().parent.parent
 faiss_path = base_path / "faiss_index"
 
+# Cache global instances
+_vector_store = None
+_llm = None
+_hybrid_retriever = None
+
 def initialize_embeddings():
     '''Initialize and return OpenAI embeddings'''
     if not OPENAI_API_KEY or not EMBEDDING_MODEL:
@@ -35,47 +40,53 @@ def initialize_embeddings():
 
 def initialize_llm():
     '''Initialize and return the language model'''
-    if not OPENAI_API_KEY or not CHAT_MODEL:
-        raise ValueError("OPENAI_API_KEY or CHAT_MODEL not set in environment variables")
-    llm = ChatOpenAI(
-        api_key=OPENAI_API_KEY,
-        model_name=CHAT_MODEL,
-        temperature=0,
-        streaming=True,  # Enable streaming
-    )
-    return llm
+    global _llm
+    if _llm is None:
+        if not OPENAI_API_KEY or not CHAT_MODEL:
+            raise ValueError("OPENAI_API_KEY or CHAT_MODEL not set in environment variables")
+        _llm = ChatOpenAI(
+            api_key=OPENAI_API_KEY,
+            model_name=CHAT_MODEL,
+            temperature=0,
+            streaming=True,
+        )
+    return _llm
 
 def load_faiss_files():
     '''Load existing vector store'''
-    try:
-        embeddings = initialize_embeddings()
-        if not os.path.exists('faiss_index'):
-            raise FileNotFoundError("FAISS index file not found")
-        vector_store = FAISS.load_local(
-            faiss_path,
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-        return vector_store
-    except Exception as e:
-        raise Exception(f"Failed to load FAISS index: {str(e)}")
+    global _vector_store
+    if _vector_store is None:
+        try:
+            embeddings = initialize_embeddings()
+            if not os.path.exists('faiss_index'):
+                raise FileNotFoundError("FAISS index file not found")
+            _vector_store = FAISS.load_local(
+                faiss_path,
+                embeddings,
+                allow_dangerous_deserialization=True
+            )
+        except Exception as e:
+            raise Exception(f"Failed to load FAISS index: {str(e)}")
+    return _vector_store
 
 def setup_retrievers(vector_store):
     '''Setup hybrid retriever'''
-    try:
-        semantic_retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-        documents = list(vector_store.docstore._dict.values())
-        if not documents:
-            raise ValueError("No documents found in FAISS vector store")
-        keyword_retriever = BM25Retriever.from_documents(documents)
-        keyword_retriever.k = 3
-        hybrid_retriever = EnsembleRetriever(
-            retrievers=[semantic_retriever, keyword_retriever],
-            weights=[0.7, 0.3]
-        )
-        return hybrid_retriever
-    except Exception as e:
-        raise Exception(f"Error setting up retrievers: {str(e)}")
+    global _hybrid_retriever
+    if _hybrid_retriever is None:
+        try:
+            semantic_retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+            documents = list(vector_store.docstore._dict.values())
+            if not documents:
+                raise ValueError("No documents found in FAISS vector store")
+            keyword_retriever = BM25Retriever.from_documents(documents)
+            keyword_retriever.k = 3
+            _hybrid_retriever = EnsembleRetriever(
+                retrievers=[semantic_retriever, keyword_retriever],
+                weights=[0.7, 0.3]
+            )
+        except Exception as e:
+            raise Exception(f"Error setting up retrievers: {str(e)}")
+    return _hybrid_retriever
 
 # Define custom prompt template with formatting instructions
 PROMPT_TEMPLATE = """
@@ -96,9 +107,9 @@ Instructions:
 - Only if the context contains relevant information, generate 3 follow-up questions that are relevant, specific, and encourage deeper exploration of the topic, guiding the user toward purchasing a product from E&E Solutions. Ensure the questions are concise, natural, and based solely on the provided context or information likely to be in the vector store (index.faiss).
 - Format the follow-up questions as a numbered list.
 - Our aim is to guide the user toward purchasing a product, so frame questions to highlight product benefits, features, or next steps in the sales process.
-- Do not generate follow-up questions if the user has inquired about how to purchase a product. Instead, ask for the user's name, company, designation, product(s) of interest, and any additional requirements.
-- Once the user provides these details [name, company, designation, product(s) of interest, and any additional requirements], only then respond with: "Thank you! \n Our sales person will contact you soon. If you want any further details or have any doubt, please contact us at E&E Solutions' phone number or write to us at E&E Solutions' email address."
-- Location/ Address is Factory No. E32, C.D.F Industrial Area, Aligarh (U.P) 202122, India
+- Do not generate follow-up questions if the user has inquired about how to purchase a product. Instead, respond by asking the user to fill out the inquiry form available at the following link: http://localhost:8080/form. 
+- Your response should include: "Please <a href="#" onclick="send_event('open_form')">fill out our enquiry form</a>. A sales representative will contact you shortly after submission." and modify the response as per the requirement.
+- Do not ask for name, company, or designation directly in chat. Only collect it via the form.
 """
 
 async def get_streaming_response(question):
@@ -106,12 +117,12 @@ async def get_streaming_response(question):
     try:
         # Search in Qdrant first
         timestamp = datetime.now().isoformat()
-        similar_result = search_similar_question(question)
+        similar_result = await search_similar_question(question)
 
         if similar_result:
-            point_id = similar_result["point_id"]
-            response = similar_result["payload"]["response"]
-            
+            point_id = similar_result["point_id"]      # get point id (vector)
+            response = similar_result["payload"]["response"]    # get response from payload
+
             update_timestamp(
                 point_id=point_id,
                 timestamp=timestamp
