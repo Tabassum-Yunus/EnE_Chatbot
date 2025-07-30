@@ -1,7 +1,7 @@
 import os
 import asyncio
-from datetime import datetime
 from dotenv import load_dotenv
+from Components.query_time import query_date_time
 from Components.chat_logic import get_streaming_response
 from Components.qdrant_store import store_question_response
 from contextlib import contextmanager
@@ -47,8 +47,9 @@ def main():
             overflow-y: auto;
             overflow-x: hidden;
             width: 100%;
+            padding-right: 1rem;
+            max-height: 400px;
         }
-        
     </style>
     ''')
 
@@ -57,12 +58,18 @@ def main():
         if not question:
             return
 
-        timestamp = datetime.now().isoformat()
-        text.value = ''
+        # Step 1: Display query, clear input bar, and show spinner
         with message_container:
             ui.chat_message(text=question, sent=True).classes('sent-message')
-            response_message = ui.chat_message(sent=False).classes('received-message')
             spinner = ui.spinner(type='dots')
+        text.value = ''  # Clear input bar
+        ui.update()  
+
+        await ui.run_javascript('''
+            let container = document.querySelector(".dialog-container");
+            container.scrollTop = container.scrollHeight;
+        ''')
+        await asyncio.sleep(0) 
 
         @contextmanager
         def disable_with_spinner(button: ui.button):
@@ -74,34 +81,44 @@ def main():
             finally:
                 button.set_icon(original_icon)
                 button.enable()
-
+                
         with disable_with_spinner(send_button):
             try:
-                response = ""
-                response_message.clear()
+                # Step 3: Clear input and prepare response area
+                with message_container:
+                    response_message = ui.chat_message(sent=False).classes('received-message')
                 with response_message:
                     response_element = ui.html("")
-                
+
+                # Step 4: Stream response and remove spinner on first chunk
+                response = ""
+                first_chunk = True
                 async for chunk in get_streaming_response(question):
                     if chunk.startswith("Error:"):
                         response = chunk
+                        if spinner in message_container:
+                            message_container.remove(spinner)
                         break
                     response += chunk
-                    
                     response_element.content = response.replace('\n', '<br>')
-                    ui.run_javascript('''
+                    if first_chunk and spinner in message_container:
+                        message_container.remove(spinner)
+                        first_chunk = False
+                    await ui.run_javascript('''
                         let container = document.querySelector(".dialog-container");
                         container.scrollTop = container.scrollHeight;
                     ''')
+                    await asyncio.sleep(0)  
 
-                message_container.remove(spinner)
+                # Step 5: Remove spinner if not already removed (for safety)
+                if spinner in message_container:
+                    message_container.remove(spinner)
 
             except Exception as e:
-                response_message.clear()
-                with response_message:
-                    ui.html(f"Error: Failed to process query - {str(e)}")
-            
-            finally:
+                if response_message:
+                    response_message.clear()
+                    with response_message:
+                        ui.html(f"Error: Failed to process query - {str(e)}")
                 if spinner in message_container:
                     message_container.remove(spinner)
 
@@ -113,13 +130,22 @@ def main():
     # Suppress default "Connection lost" message
     ui.run_javascript("""
         window.addEventListener('beforeunload', () => {});
-        window.nicegui.handleDisconnect = () => {};
+        window.nicegui = window.nicegui || {};
+        window.nicegui.handleDisconnect = () => {
+            console.log('Connection lost suppressed');
+        };
+        const originalNotify = window.Quasar.Notify.create;
+        window.Quasar.Notify.create = (options) => {
+            if (typeof options === 'object' && options.message && options.message.includes('Connection lost')) {
+                return;
+            }
+            originalNotify(options);
+        };
     """)
 
     # Main page content
     with ui.column().classes('w-full max-w-3xl mx-auto my-6 items-center'):
         ui.button("Let's Chat", icon='forum', on_click=lambda: dialog.open()).classes('custom-red-background text-white h-11 rounded-lg normal-case absolute bottom-10 right-10')
-        # ui.button('Open Chat', on_click=lambda: dialog.open()).classes('custom-red-background text-white')
 
     # Dialogue box
     with ui.dialog() as dialog, ui.card().classes('w-full max-w-lg'):
@@ -145,4 +171,5 @@ def main():
 
 ui.run(
     title='E&E Solutions',
+    reconnect_timeout=60,
 )
