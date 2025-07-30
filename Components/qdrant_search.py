@@ -24,7 +24,7 @@ def initialize_embeddings():
     )
     return embeddings
 
-def search_similar_question(question, similarity_threshold=0.8, collection_name=COLLECTION_NAME):
+async def search_similar_question(question, similarity_threshold=0.7, collection_name=COLLECTION_NAME):
     """Search for similar questions in Qdrant vector store"""
     try:
         client = initialize_qdrant_client()
@@ -41,11 +41,12 @@ def search_similar_question(question, similarity_threshold=0.8, collection_name=
             limit=1,
             score_threshold=similarity_threshold
         )
-        
+
+        # If similar question found in Qdrant
         if search_result:
             return {
-                "payload": search_result[0].payload,
-                "point_id": search_result[0].id  # get the matched point ID
+                "payload": search_result[0].payload,    # get the matched point payload (question, response, timestamp)
+                "point_id": search_result[0].id     # get the matched point ID
             }
         return None
     except Exception as e:
